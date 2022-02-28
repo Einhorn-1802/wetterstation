@@ -1,19 +1,21 @@
 #include <ESP8266WiFi.h>        // Include the Wi-Fi library
-#include <NTPClient.h>
-#include <WiFiUdp.h>
+//#include <WiFiUdp.h>
 #include "wlanData.h"
-#include "myTime.h"
-#include "utcMemory.h"
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <BlynkSimpleEsp8266.h>
-
-#define RTCMEMORYSTART 65
-
+#include <time.h>
 
 extern "C" {
 #include "user_interface.h"
 }
+
+
+#define RTCMEMORYSTART 65
+#define MY_NTP_SERVER "de.pool.ntp.org"           
+#define MY_TZ "CET-1CEST,M3.5.0/02,M10.5.0/03"   
+
+
 
 #define BLYNK_PRINT Serial
 
@@ -23,7 +25,12 @@ OneWire oneWire(ONE_WIRE_PIN);
 DallasTemperature sensors(&oneWire);
 
 char auth[] = BLYNK_AUTH_TOKEN;
-#define BLYNK_FIRMWARE_VERSION "0.0.1"
+
+
+time_t now;
+tm tm;
+
+int keepAlive;
 
 typedef struct {
   int rainCount;
@@ -32,7 +39,6 @@ typedef struct {
 } rtcStore;
 
 rtcStore rtcMem;
-unsigned long epochTime;
 
 int wakeupReason;
 
@@ -58,18 +64,16 @@ void setup() {
     Serial.println(rtcMem.y_day);
     if (wakeupReason == 0) {
       rtcMem.rainCount++;
+      writeToRTCMemory();
     }    
     Blynk.begin(auth, ssid, password);
     pinMode(D4, OUTPUT);
-    timeClient.begin();
-    timeClient.update();
-    epochTime = timeClient.getEpochTime();
-    struct tm *ptm = gmtime ((time_t *)&epochTime);
-    int current_year = ptm->tm_year + 1900;
-    int year_day = ptm-> tm_yday;
-    int day_hour = ptm-> tm_hour;
-    Serial.print("Epoch Time: ");
-    Serial.println(epochTime);
+    time(&now);                       // read the current time
+    localtime_r(&now, &tm);           // update the structure tm with the current time
+ 
+    int current_year = tm.tm_year + 1900;
+    int year_day = tm.tm_yday;
+    int day_hour = tm.tm_hour;
     Serial.print("Current Year: ");
     Serial.println(current_year);
     Serial.print("Day of the Year: ");
@@ -93,12 +97,20 @@ void setup() {
     Serial.println(sensors.getTempCByIndex(0));
     Blynk.virtualWrite(V0, sensors.getTempCByIndex(0));
     Blynk.virtualWrite(V1, (double)rtcMem.rainCount * 0.25);
-    delay(100);
-//    ESP.deepSleep(1e6*30);
-    ESP.deepSleep(0);
 
 }
 
-void loop() {
+void loop() {   
+  Blynk.syncVirtual(V2);
+  Blynk.run();
+  Blynk.syncVirtual(V2);
 
+   if (keepAlive != 1) {
+      ESP.deepSleep(1e6*300);
+   }
+}   
+
+BLYNK_WRITE(V2)
+{
+  keepAlive= param.asInt();
 }
