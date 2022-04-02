@@ -13,6 +13,14 @@
 #include <ArduinoOTA.h>
 
 
+#include <Arduino.h>
+//#include <ESPAsyncTCP.h>
+//#include <ESPAsyncWebServer.h>
+//#include <WebSerial.h>
+
+//AsyncWebServer server(80);
+
+
 extern "C" {
 #include "user_interface.h"
 }
@@ -25,7 +33,7 @@ extern "C" {
 #define SEALEVELPRESSURE_HPA (1013.25)
 Adafruit_BME280 bme; // I2C
 
-#define RTCMEMORYSTART 75
+#define RTCMEMORYSTART 70
 #define MY_NTP_SERVER "de.pool.ntp.org"
 #define MY_TZ "CET-1CEST,M3.5.0/02,M10.5.0/03"
 
@@ -43,6 +51,7 @@ char auth[] = BLYNK_AUTH_TOKEN;
 
 time_t now;
 tm tm;
+int rtcLost = 0;
 
 int keepAlive;
 
@@ -50,10 +59,11 @@ typedef struct {
   int rainCount;
   int year;
   int y_day;
+  int rtcLost;
+  int wakeup;
 } rtcStore;
 
 rtcStore rtcMem;
-
 int wakeupReason;
 
 void readFromRTCMemory() {
@@ -65,22 +75,30 @@ void writeToRTCMemory() {
   yield();
 }
 
-void setup() {
-  // put your setup code here, to run once:
-  Serial.begin(115200);         // Start the Serial communication to send messages to the computer
-  wakeupReason = digitalRead(13);
-  readFromRTCMemory();
-  Serial.println("");
+void incrementRain() {
+   wakeupReason = digitalRead(13);
+   readFromRTCMemory();
+   /*  Serial.println("");
   Serial.print("Wakeup Reason:");
   Serial.println(wakeupReason);
   Serial.print("Rain Count: ");
   Serial.println(rtcMem.rainCount);
   Serial.println(rtcMem.year);
   Serial.println(rtcMem.y_day);
-  if (wakeupReason == 0) {
-    rtcMem.rainCount++;
-    writeToRTCMemory();
-  }
+*/
+   if (wakeupReason == 0) {
+     rtcMem.rainCount++;
+   }
+   writeToRTCMemory();
+}
+
+void setup() {
+  // put your setup code here, to run once:
+  Serial.begin(115200);         // Start the Serial communication to send messages to the computer
+  incrementRain();
+  
+  Blynk.begin(auth, ssid, password);
+
   unsigned status;
   status = bme.begin(0x76);
   if (!status) {
@@ -90,10 +108,9 @@ void setup() {
     Serial.print("   ID of 0x56-0x58 represents a BMP 280,\n");
     Serial.print("        ID of 0x60 represents a BME 280.\n");
     Serial.print("        ID of 0x61 represents a BME 680.\n");
-    while (1) delay(10);
+//    while (1) delay(10);
   }
 
-  Blynk.begin(auth, ssid, password);
   pinMode(D4, OUTPUT);
   time(&now);                       // read the current time
   localtime_r(&now, &tm);           // update the structure tm with the current time
@@ -101,24 +118,25 @@ void setup() {
   int current_year = tm.tm_year + 1900;
   int year_day = tm.tm_yday;
   int day_hour = tm.tm_hour;
-  Serial.print("Current Year: ");
-  Serial.println(current_year);
-  Serial.print("Day of the Year: ");
-  Serial.println(year_day);
 
-  if ((current_year == rtcMem.year && year_day == rtcMem.y_day) || now < 1) {
+  if (current_year < 2021) {
   }
   else {
-    if (wakeupReason == 0) {
-      rtcMem.rainCount = 1;
-    }
-    else {
-      rtcMem.rainCount = 0;
-    }
-    rtcMem.year = current_year;
-    rtcMem.y_day = year_day;
-    writeToRTCMemory();
+     if ((current_year == rtcMem.year && year_day == rtcMem.y_day)) {
+     }
+     else {
+        if (wakeupReason == 0) {
+           rtcMem.rainCount = 1;
+       }
+     else {
+       rtcMem.rainCount = 0;
+     }
+     rtcMem.year = current_year;
+     rtcMem.y_day = year_day;
+     writeToRTCMemory();
+     }
   }
+  
   //    sensors.begin();
   //    sensors.requestTemperatures();
   //    Serial.println(sensors.getTempCByIndex(0));
@@ -126,7 +144,9 @@ void setup() {
   Blynk.virtualWrite(V1, (double)rtcMem.rainCount * 0.25);
   Blynk.virtualWrite(V3, bme.readPressure() / 100.0F);
   Blynk.virtualWrite(V4, bme.readHumidity());
-
+  Blynk.virtualWrite(V5, rtcLost);
+  Blynk.virtualWrite(V6, current_year);
+  Blynk.virtualWrite(V7, rtcMem.wakeup);
 
   ArduinoOTA.onStart([]() {
     String type;
@@ -172,7 +192,7 @@ void loop() {
   Blynk.syncVirtual(V2);
 
   if (keepAlive != 1) {
-    ESP.deepSleep(1e6 * 300);
+    ESP.deepSleep(1e6 * 600);
   }
   else {
     ArduinoOTA.handle();
