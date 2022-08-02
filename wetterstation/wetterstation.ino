@@ -14,6 +14,10 @@
 
 
 #include <Arduino.h>
+
+#include <SDS011.h>
+
+
 //#include <ESPAsyncTCP.h>
 //#include <ESPAsyncWebServer.h>
 //#include <WebSerial.h>
@@ -48,12 +52,19 @@ Adafruit_BME280 bme; // I2C
 
 char auth[] = BLYNK_AUTH_TOKEN;
 
+// dust sensor
+float p10,p25;
+int error;
+
+SDS011 my_sds;
+
 
 time_t now;
 tm tm;
 int rtcLost = 0;
 
 int keepAlive;
+int timeout = 0;
 
 typedef struct {
   int rainCount;
@@ -94,10 +105,25 @@ void incrementRain() {
 
 void setup() {
   // put your setup code here, to run once:
-  Serial.begin(115200);         // Start the Serial communication to send messages to the computer
+  Serial.begin(9600);         // Start the Serial communication to send messages to the computer
   incrementRain();
+
+  // switch on Dust Sensor
+  pinMode(D8, OUTPUT);
+  digitalWrite(D8, HIGH);
+  delay(1000);
+  my_sds.begin(D6,D5);
+
+
   
   Blynk.begin(auth, ssid, password);
+
+  my_sds.begin(D6,D5);
+ 
+
+//digitalWrite (D8, LOW); // turn dust sensor off
+
+
 
   unsigned status;
   status = bme.begin(0x76);
@@ -141,7 +167,7 @@ void setup() {
   //    sensors.requestTemperatures();
   //    Serial.println(sensors.getTempCByIndex(0));
   Blynk.virtualWrite(V0, bme.readTemperature());
-  Blynk.virtualWrite(V1, (double)rtcMem.rainCount * 0.25);
+  Blynk.virtualWrite(V1, (double)rtcMem.rainCount * 0.1381);
   Blynk.virtualWrite(V3, bme.readPressure() / 100.0F);
   Blynk.virtualWrite(V4, bme.readHumidity());
   Blynk.virtualWrite(V5, rtcLost);
@@ -190,9 +216,21 @@ void loop() {
   Blynk.syncVirtual(V2);
   Blynk.run();
   Blynk.syncVirtual(V2);
-
-  if (keepAlive != 1) {
-    ESP.deepSleep(1e6 * 600);
+  if (timeout < 10000) {
+     timeout ++;
+     error = my_sds.read(&p25,&p10);
+     if (!error) {
+        Blynk.virtualWrite(V8, p25);
+        Blynk.virtualWrite(V9, p10);
+        Serial.println("P2.5: "+String(p25));
+        Serial.println("P10:  "+String(p10));
+        Serial.println(String(timeout));
+        timeout = 10000;
+        digitalWrite (D8, LOW); // turn dust sensor off
+     }   
+  }
+  if (keepAlive != 1 && timeout >= 10000) {
+    ESP.deepSleep(1e6 * 300);
   }
   else {
     ArduinoOTA.handle();
